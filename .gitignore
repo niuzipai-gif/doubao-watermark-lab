@@ -5,6 +5,7 @@ __pycache__/
 *.webm
 *.mp4
 *.png
+!avatar.png
 *.jpg
 *.jpeg
 video-check/
