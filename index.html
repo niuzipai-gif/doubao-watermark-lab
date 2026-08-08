@@ -1,0 +1,314 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>豆包水印清理器 · V2</title>
+    <style>
+      :root {
+        --paper: #f5f1e9;
+        --paper-deep: #e8e0d2;
+        --ink: #1f211d;
+        --muted: #6f7168;
+        --line: #d8d0c2;
+        --orange: #e56638;
+        --orange-deep: #a93a1e;
+        --green: #1d7257;
+        --shadow: 0 22px 60px rgba(45, 35, 25, 0.13);
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        color: var(--ink);
+        background:
+          radial-gradient(circle at 88% 8%, rgba(229, 102, 56, 0.16), transparent 27rem),
+          linear-gradient(125deg, #fbf8f2 0%, var(--paper) 47%, #eee6d9 100%);
+        font-family: "Noto Sans SC", "Microsoft YaHei", "PingFang SC", sans-serif;
+      }
+      button, input { font: inherit; }
+      .shell { width: min(1280px, calc(100% - 32px)); margin: 0 auto; padding: 28px 0 46px; }
+      .masthead { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; margin-bottom: 24px; }
+      .eyebrow { margin: 0 0 10px; color: var(--orange-deep); font-weight: 800; letter-spacing: .16em; font-size: 12px; }
+      h1 { margin: 0; max-width: 720px; font-family: Georgia, "Songti SC", serif; font-size: clamp(36px, 6vw, 76px); line-height: .96; letter-spacing: -.05em; }
+      .lede { max-width: 560px; margin: 18px 0 0; color: var(--muted); line-height: 1.7; font-size: 15px; }
+      .stamp { min-width: 180px; border: 1px solid var(--ink); padding: 14px 16px; transform: rotate(2deg); font-family: Georgia, serif; font-size: 13px; line-height: 1.35; }
+      .layout { display: grid; grid-template-columns: 310px minmax(0, 1fr); gap: 18px; align-items: start; }
+      .panel, .stage { border: 1px solid var(--line); background: rgba(255, 252, 247, .76); box-shadow: var(--shadow); }
+      .panel { padding: 18px; }
+      .panel h2 { margin: 0 0 16px; font-size: 14px; letter-spacing: .08em; text-transform: uppercase; }
+      .group { border-top: 1px solid var(--line); padding-top: 16px; margin-top: 16px; }
+      label { display: block; margin-bottom: 7px; color: var(--muted); font-size: 12px; font-weight: 800; }
+      input[type=file], input[type=number] { width: 100%; border: 1px solid var(--line); border-radius: 8px; background: #fffdf9; color: var(--ink); padding: 9px 10px; }
+      input[type=number] { padding: 8px 7px; }
+      .coords { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+      .coord label { font-size: 10px; margin-bottom: 4px; }
+      .button-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 10px; }
+      button { min-height: 40px; border: 1px solid var(--ink); border-radius: 8px; padding: 8px 11px; background: var(--ink); color: #fff; font-weight: 800; cursor: pointer; transition: transform .15s ease, background .15s ease; }
+      button:hover:not(:disabled) { transform: translateY(-1px); background: var(--orange-deep); }
+      button.secondary { background: transparent; color: var(--ink); }
+      button:disabled { opacity: .42; cursor: not-allowed; }
+      .note { margin: 10px 0 0; color: var(--muted); font-size: 12px; line-height: 1.55; }
+      .switch { display: flex; align-items: center; gap: 8px; margin-top: 12px; color: var(--muted); font-size: 12px; }
+      .switch input { accent-color: var(--orange); }
+      .stage { padding: 14px; min-width: 0; }
+      .status { display: flex; justify-content: space-between; gap: 12px; align-items: center; min-height: 42px; padding: 10px 13px; background: var(--paper-deep); font-size: 13px; }
+      .status.ok { color: var(--green); }
+      .status.error { color: var(--orange-deep); }
+      .status strong { font-size: 11px; letter-spacing: .08em; }
+      .meta { display: flex; flex-wrap: wrap; gap: 8px 18px; margin: 12px 0; color: var(--muted); font-size: 12px; }
+      .previews { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+      .card { min-width: 0; border: 1px solid var(--line); background: #1f211d; }
+      .card-head { display: flex; justify-content: space-between; padding: 9px 11px; background: #fffdf9; color: var(--muted); font-size: 11px; font-weight: 800; }
+      .canvas-wrap { position: relative; min-height: 380px; display: grid; place-items: center; overflow: hidden; background: repeating-conic-gradient(#30332e 0 25%, #282b27 0 50%) 50% / 18px 18px; }
+      canvas, video, img { display: block; max-width: 100%; height: auto; }
+      #sourceCanvas { width: 100%; }
+      #selectionCanvas { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+      #resultImage, #resultVideo { width: 100%; }
+      .empty { position: absolute; inset: 0; display: grid; place-items: center; padding: 30px; text-align: center; color: #d8d0c2; font-family: Georgia, serif; font-size: 22px; }
+      .download { display: inline-flex; margin-top: 14px; color: var(--orange-deep); font-size: 13px; font-weight: 800; text-decoration: none; }
+      .log { margin: 14px 0 0; min-height: 100px; max-height: 190px; overflow: auto; padding: 12px; border: 1px solid var(--line); background: #252722; color: #d9ddce; white-space: pre-wrap; font: 12px/1.55 Consolas, monospace; }
+      @media (max-width: 900px) { .masthead { display: block; } .stamp { display: inline-block; margin-top: 20px; } .layout { grid-template-columns: 1fr; } }
+      @media (max-width: 650px) { .shell { width: min(100% - 20px, 1280px); padding-top: 18px; } .previews { grid-template-columns: 1fr; } .canvas-wrap { min-height: 250px; } h1 { font-size: 48px; } }
+    </style>
+  </head>
+  <body>
+    <main class="shell">
+      <header class="masthead">
+        <div>
+          <p class="eyebrow">DOUBAO / CLEAN ROOM / V2</p>
+          <h1>只修字，不抹掉整块画面。</h1>
+          <p class="lede">针对豆包右下角“豆包生成”字样的独立清理器。自动模式识别浅色字形，再按字形 mask 修复；图片和视频在本地浏览器处理。</p>
+        </div>
+        <div class="stamp">INDEPENDENT TOOL<br />主项目 omni / gemini 不受影响</div>
+      </header>
+
+      <section class="layout">
+        <aside class="panel">
+          <h2>Input / 输入</h2>
+          <label for="fileInput">图片或视频</label>
+          <input id="fileInput" type="file" accept="image/*,video/*" />
+          <p id="sourceInfo" class="note">尚未选择素材</p>
+
+          <div class="group">
+            <h2>Mask / 定位</h2>
+            <div class="coords">
+              <div class="coord"><label for="x">X</label><input id="x" type="number" value="0" /></div>
+              <div class="coord"><label for="y">Y</label><input id="y" type="number" value="0" /></div>
+              <div class="coord"><label for="w">W</label><input id="w" type="number" value="0" /></div>
+              <div class="coord"><label for="h">H</label><input id="h" type="number" value="0" /></div>
+            </div>
+            <div class="button-row">
+              <button id="autoBtn" class="secondary" disabled>自动定位</button>
+              <button id="applyBtn" class="secondary" disabled>应用框选</button>
+            </div>
+            <label class="switch"><input id="fullRect" type="checkbox" /> 整块区域兜底修复</label>
+            <p class="note">默认只修复框内的浅色字形。勾选兜底后才会填满整个框，适合水印是实心贴纸的素材。</p>
+          </div>
+
+          <div class="group">
+            <h2>Run / 处理</h2>
+            <button id="runBtn" disabled>开始清理</button>
+            <a id="download" class="download" hidden>下载处理结果</a>
+            <p class="note">输出图片为 PNG；视频为 WebM。原文件不会上传。</p>
+          </div>
+        </aside>
+
+        <section class="stage">
+          <div id="status" class="status"><span>等待上传素材</span><strong>READY</strong></div>
+          <div class="meta"><span id="rectInfo">区域：未设置</span><span id="maskInfo">Mask：未生成</span></div>
+          <div class="previews">
+            <article class="card">
+              <div class="card-head"><span>ORIGINAL / 原图</span><span>定位框为橙色</span></div>
+              <div class="canvas-wrap"><canvas id="sourceCanvas" width="1" height="1"></canvas><canvas id="selectionCanvas" width="1" height="1"></canvas><div id="sourceEmpty" class="empty">上传样例<br />开始定位</div></div>
+            </article>
+            <article class="card">
+              <div class="card-head"><span>RESULT / 结果</span><span>真实处理预览</span></div>
+              <div class="canvas-wrap"><img id="resultImage" hidden alt="图片处理结果" /><video id="resultVideo" hidden controls playsinline></video><div id="resultEmpty" class="empty">处理完成后<br />结果会出现在这里</div></div>
+            </article>
+          </div>
+          <pre id="log" class="log"></pre>
+        </section>
+      </section>
+    </main>
+
+    <script>
+      const $ = (id) => document.getElementById(id);
+      const els = { file: $("fileInput"), source: $("sourceCanvas"), selection: $("selectionCanvas"), resultImage: $("resultImage"), resultVideo: $("resultVideo"), sourceEmpty: $("sourceEmpty"), resultEmpty: $("resultEmpty"), sourceInfo: $("sourceInfo"), status: $("status"), rectInfo: $("rectInfo"), maskInfo: $("maskInfo"), log: $("log"), x: $("x"), y: $("y"), w: $("w"), h: $("h"), auto: $("autoBtn"), apply: $("applyBtn"), fullRect: $("fullRect"), run: $("runBtn"), download: $("download") };
+      const sourceCtx = els.source.getContext("2d", { willReadFrequently: true });
+      const state = { file: null, url: "", type: "", width: 0, height: 0, rect: { x: 0, y: 0, w: 0, h: 0 }, firstFrame: null, busy: false, outputUrl: "" };
+
+      function log(message) { const stamp = new Date().toLocaleTimeString("zh-CN", { hour12: false }); els.log.textContent += `[${stamp}] ${message}\n`; els.log.scrollTop = els.log.scrollHeight; }
+      function clamp(n, min, max) { return Math.max(min, Math.min(max, n)); }
+      function setStatus(message, kind = "ok") { els.status.className = `status ${kind}`; els.status.firstElementChild.textContent = message; els.status.lastElementChild.textContent = kind === "error" ? "ERROR" : "READY"; }
+      function setRect(x, y, w, h) {
+        state.rect = { x: clamp(Math.round(x), 0, state.width), y: clamp(Math.round(y), 0, state.height), w: 0, h: 0 };
+        state.rect.w = clamp(Math.round(w), 0, state.width - state.rect.x);
+        state.rect.h = clamp(Math.round(h), 0, state.height - state.rect.y);
+        els.x.value = state.rect.x; els.y.value = state.rect.y; els.w.value = state.rect.w; els.h.value = state.rect.h;
+        els.rectInfo.textContent = `区域：${state.rect.x}, ${state.rect.y}, ${state.rect.w} × ${state.rect.h}`;
+        drawSelection();
+      }
+      function rectFromInputs() { setRect(Number(els.x.value) || 0, Number(els.y.value) || 0, Number(els.w.value) || 0, Number(els.h.value) || 0); }
+      function defaultRect() { setRect(state.width * .80, state.height * .90, state.width * .20, state.height * .10); }
+      function drawSelection() {
+        els.selection.width = state.width || 1; els.selection.height = state.height || 1;
+        const ctx = els.selection.getContext("2d"); ctx.clearRect(0, 0, els.selection.width, els.selection.height);
+        if (!state.rect.w || !state.rect.h) return;
+        ctx.fillStyle = "rgba(229,102,56,.13)"; ctx.fillRect(state.rect.x, state.rect.y, state.rect.w, state.rect.h);
+        ctx.strokeStyle = "#ff8b5a"; ctx.lineWidth = Math.max(3, Math.round(state.width / 500)); ctx.setLineDash([12, 8]); ctx.strokeRect(state.rect.x, state.rect.y, state.rect.w, state.rect.h); ctx.setLineDash([]);
+      }
+      function showSource() { els.sourceEmpty.hidden = true; sourceCtx.drawImage(state.firstFrame, 0, 0, state.width, state.height); drawSelection(); }
+      function luminance(r, g, b) { return .2126 * r + .7152 * g + .0722 * b; }
+
+      function buildMask(data, width, height, rect, fullRect) {
+        const mask = new Uint8Array(width * height);
+        const left = clamp(rect.x, 0, width), top = clamp(rect.y, 0, height), right = clamp(rect.x + rect.w, 0, width), bottom = clamp(rect.y + rect.h, 0, height);
+        if (right <= left || bottom <= top) return { mask, count: 0, mode: "empty" };
+        if (fullRect) {
+          for (let y = top; y < bottom; y++) mask.fill(1, y * width + left, y * width + right);
+          return { mask, count: (right - left) * (bottom - top), mode: "full-rect" };
+        }
+        let count = 0;
+        for (let y = top; y < bottom; y++) {
+          const row = y * width;
+          for (let x = left; x < right; x++) {
+            const p = (row + x) * 4, r = data[p], g = data[p + 1], b = data[p + 2];
+            const max = Math.max(r, g, b), min = Math.min(r, g, b), gray = max - min < 58, bright = luminance(r, g, b) > 142;
+            if (gray && bright && y > height * .925 && x > width * .805) { mask[row + x] = 1; count++; }
+          }
+        }
+        // Cover anti-aliased edges, but never turn the whole rectangle into a blur block.
+        const dilated = new Uint8Array(mask);
+        for (let y = top; y < bottom; y++) for (let x = left; x < right; x++) {
+          const idx = y * width + x; if (!mask[idx]) continue;
+          for (let oy = -2; oy <= 2; oy++) for (let ox = -2; ox <= 2; ox++) {
+            if (Math.abs(ox) + Math.abs(oy) > 3) continue;
+            const nx = x + ox, ny = y + oy; if (nx >= left && nx < right && ny >= top && ny < bottom) dilated[ny * width + nx] = 1;
+          }
+        }
+        let finalCount = 0; for (let i = 0; i < dilated.length; i++) finalCount += dilated[i];
+        return { mask: dilated, count: finalCount, mode: count ? "glyph" : "fallback-empty" };
+      }
+
+      function buildVideoMask(data, width, height) {
+        const raw = new Uint8Array(width * height);
+        const zones = [
+          [0, 0, Math.floor(width * .30), Math.floor(height * .24)],
+          [Math.floor(width * .70), 0, width, Math.floor(height * .24)],
+          [0, Math.floor(height * .76), Math.floor(width * .30), height],
+          [Math.floor(width * .70), Math.floor(height * .76), width, height]
+        ];
+        for (const [left, top, right, bottom] of zones) for (let y = top; y < bottom; y++) for (let x = left; x < right; x++) {
+          const p = (y * width + x) * 4, r = data[p], g = data[p + 1], b = data[p + 2];
+          if (luminance(r, g, b) > 142 && Math.max(r, g, b) - Math.min(r, g, b) < 58) raw[y * width + x] = 1;
+        }
+        const kept = new Uint8Array(raw), visited = new Uint8Array(raw), limit = Math.max(60, Math.floor(width * height * .003));
+        for (const [left, top, right, bottom] of zones) for (let y = top; y < bottom; y++) for (let x = left; x < right; x++) {
+          const start = y * width + x; if (!raw[start] || visited[start]) continue;
+          const component = [], queue = [start]; visited[start] = 1;
+          for (let q = 0; q < queue.length; q++) {
+            const idx = queue[q], cx = idx % width, cy = Math.floor(idx / width); component.push(idx);
+            for (const [ox, oy] of [[-1,0],[1,0],[0,-1],[0,1]]) {
+              const nx = cx + ox, ny = cy + oy; if (nx < left || nx >= right || ny < top || ny >= bottom) continue;
+              const ni = ny * width + nx; if (raw[ni] && !visited[ni]) { visited[ni] = 1; queue.push(ni); }
+            }
+          }
+          if (component.length < 4 || component.length > limit) for (const idx of component) kept[idx] = 0;
+        }
+        const dilated = new Uint8Array(kept);
+        for (const [left, top, right, bottom] of zones) for (let y = top; y < bottom; y++) for (let x = left; x < right; x++) {
+          const idx = y * width + x; if (!kept[idx]) continue;
+          for (let oy = -1; oy <= 1; oy++) for (let ox = -1; ox <= 1; ox++) { const nx = x + ox, ny = y + oy; if (nx >= left && nx < right && ny >= top && ny < bottom) dilated[ny * width + nx] = 1; }
+        }
+        let count = 0; for (let i = 0; i < dilated.length; i++) count += dilated[i];
+        return { mask: dilated, count, mode: count ? "moving-glyph" : "no-watermark" };
+      }
+
+      function inpaint(data, width, height, mask) {
+        let total = 0, minX = width, minY = height, maxX = -1, maxY = -1;
+        for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
+          if (!mask[y * width + x]) continue;
+          total++; minX = Math.min(minX, x); minY = Math.min(minY, y); maxX = Math.max(maxX, x); maxY = Math.max(maxY, y);
+        }
+        if (!total) return 0;
+        const output = new Uint8ClampedArray(data), dist = new Int16Array(width * height); dist.fill(-1);
+        const queue = new Int32Array(total), directions = [[-1,0],[1,0],[0,-1],[0,1],[-1,-1],[1,-1],[-1,1],[1,1]];
+        let head = 0, tail = 0;
+        for (let y = minY; y <= maxY; y++) for (let x = minX; x <= maxX; x++) {
+          const idx = y * width + x; if (!mask[idx]) continue;
+          let boundary = false;
+          for (const [ox, oy] of directions) { const nx = x + ox, ny = y + oy; if (nx < 0 || nx >= width || ny < 0 || ny >= height || !mask[ny * width + nx]) { boundary = true; break; } }
+          if (boundary) { dist[idx] = 0; queue[tail++] = idx; }
+        }
+        while (head < tail) {
+          const idx = queue[head++], x = idx % width, y = Math.floor(idx / width), nextD = dist[idx] + 1;
+          for (const [ox, oy] of directions) { const nx = x + ox, ny = y + oy; if (nx < 0 || nx >= width || ny < 0 || ny >= height) continue; const ni = ny * width + nx; if (mask[ni] && dist[ni] < 0) { dist[ni] = nextD; queue[tail++] = ni; } }
+        }
+        for (let qi = 0; qi < tail; qi++) {
+          const idx = queue[qi], x = idx % width, y = Math.floor(idx / width), d = dist[idx], p = idx * 4;
+          const maxStep = Math.min(14, 4 + d * 2); let sr = 0, sg = 0, sb = 0, sa = 0, sw = 0;
+          for (const [ox, oy] of directions) {
+            for (let step = 1; step <= maxStep; step++) {
+              const sx = x + ox * step, sy = y + oy * step; if (sx < 0 || sx >= width || sy < 0 || sy >= height) break;
+              const si = sy * width + sx; if (mask[si] && dist[si] >= d) continue;
+              const weight = 1 / step, sp = si * 4; sr += output[sp] * weight; sg += output[sp + 1] * weight; sb += output[sp + 2] * weight; sa += output[sp + 3] * weight; sw += weight; break;
+            }
+          }
+          if (sw) { output[p] = sr / sw; output[p + 1] = sg / sw; output[p + 2] = sb / sw; output[p + 3] = sa / sw; }
+        }
+        data.set(output); return total;
+      }
+
+      function makeCleanFrame(frameCanvas, rect, fullRect, staticMask = null, videoMode = false) {
+        const ctx = frameCanvas.getContext("2d", { willReadFrequently: true }); const image = ctx.getImageData(0, 0, frameCanvas.width, frameCanvas.height);
+        const built = staticMask ? { mask: staticMask, count: staticMask.reduce((n, v) => n + v, 0), mode: "static-glyph" } : (videoMode ? buildVideoMask(image.data, frameCanvas.width, frameCanvas.height) : buildMask(image.data, frameCanvas.width, frameCanvas.height, rect, fullRect));
+        if (!built.count) return { count: 0, mode: built.mode, mask: built.mask };
+        const count = inpaint(image.data, frameCanvas.width, frameCanvas.height, built.mask); ctx.putImageData(image, 0, 0); return { count, mode: built.mode, mask: built.mask };
+      }
+
+      async function loadImage(file) {
+        const image = new Image(); image.src = state.url; await image.decode(); state.width = image.naturalWidth; state.height = image.naturalHeight; state.firstFrame = image; els.source.width = state.width; els.source.height = state.height; defaultRect(); showSource(); els.sourceInfo.textContent = `图片 · ${state.width} × ${state.height}`; }
+      async function loadVideo(file) {
+        const video = document.createElement("video"); video.src = state.url; video.muted = true; video.playsInline = true; video.preload = "auto";
+        await new Promise((resolve, reject) => { video.onloadedmetadata = resolve; video.onerror = () => reject(new Error("视频读取失败")); });
+        state.width = video.videoWidth; state.height = video.videoHeight; video.currentTime = Math.min(.08, Math.max(.01, video.duration / 10)); await new Promise((resolve) => video.onseeked = resolve);
+        const frame = document.createElement("canvas"); frame.width = state.width; frame.height = state.height; frame.getContext("2d").drawImage(video, 0, 0, state.width, state.height); state.firstFrame = frame; els.source.width = state.width; els.source.height = state.height; defaultRect(); showSource(); els.sourceInfo.textContent = `视频 · ${state.width} × ${state.height} · ${video.duration.toFixed(2)} 秒`; }
+
+      function showResult(blob, kind) {
+        if (state.outputUrl) URL.revokeObjectURL(state.outputUrl); state.outputUrl = URL.createObjectURL(blob);
+        if (kind === "image") { els.resultImage.src = state.outputUrl; els.resultImage.hidden = false; els.resultVideo.hidden = true; els.download.download = `${state.file.name.replace(/\.[^.]+$/, "")}-doubao-cleaned-v2.png`; els.download.textContent = "下载 PNG 结果"; }
+        else { els.resultVideo.src = state.outputUrl; els.resultVideo.hidden = false; els.resultImage.hidden = true; els.download.download = `${state.file.name.replace(/\.[^.]+$/, "")}-doubao-cleaned-v2.webm`; els.download.textContent = "下载 WebM 结果"; }
+        els.resultEmpty.hidden = true; els.download.href = state.outputUrl; els.download.hidden = false;
+      }
+      async function tryBackend(route) {
+        if (!location.protocol.startsWith("http")) return null;
+        try { const form = new FormData(); form.append("media", state.file, state.file.name); form.append("x", state.rect.x); form.append("y", state.rect.y); form.append("w", state.rect.w); form.append("h", state.rect.h); form.append("fullRect", els.fullRect.checked ? "1" : "0"); const response = await fetch(route, { method: "POST", body: form }); if (!response.ok) return null; return { blob: await response.blob(), pixels: response.headers.get("X-Doubao-Mask-Pixels"), frames: response.headers.get("X-Doubao-Frames") }; } catch { return null; }
+      }
+      async function runImage() {
+        const backend = await tryBackend("/api/clean-image");
+        if (backend) { showResult(backend.blob, "image"); els.maskInfo.textContent = `Mask：本地后端 · ${backend.pixels || "已完成"} 像素`; log(`图片由 OpenCV 本地后端完成：${backend.pixels || "已处理"} 像素`); return; }
+        const out = document.createElement("canvas"); out.width = state.width; out.height = state.height; out.getContext("2d").drawImage(state.firstFrame, 0, 0); const report = makeCleanFrame(out, state.rect, els.fullRect.checked);
+        const blob = await new Promise((resolve) => out.toBlob(resolve, "image/png")); if (!blob) throw new Error("图片导出失败");
+        if (state.outputUrl) URL.revokeObjectURL(state.outputUrl); state.outputUrl = URL.createObjectURL(blob); els.resultImage.src = state.outputUrl; els.resultImage.hidden = false; els.resultVideo.hidden = true; els.resultEmpty.hidden = true; els.download.href = state.outputUrl; els.download.download = `${state.file.name.replace(/\.[^.]+$/, "")}-doubao-cleaned-v2.png`; els.download.textContent = "下载 PNG 结果"; els.download.hidden = false; els.maskInfo.textContent = `Mask：${report.mode} · ${report.count.toLocaleString()} 像素`; log(`图片完成：${report.mode}，修复 ${report.count.toLocaleString()} 个像素`); }
+
+      async function runVideo() {
+        const backend = await tryBackend("/api/clean-video");
+        if (backend) { showResult(backend.blob, "video"); els.maskInfo.textContent = `Mask：本地后端 · ${backend.frames || "完整"} 帧`; log(`视频由 OpenCV 本地后端完成：${backend.frames || "完整"} 帧`); return; }
+        const source = document.createElement("video"); source.src = state.url; source.muted = true; source.playsInline = true; await new Promise((resolve, reject) => { source.onloadedmetadata = resolve; source.onerror = () => reject(new Error("视频读取失败")); });
+        const canvas = document.createElement("canvas"); canvas.width = state.width; canvas.height = state.height; const stream = canvas.captureStream(24); const types = ["video/webm;codecs=vp9", "video/webm;codecs=vp8", "video/webm"]; const mime = types.find((v) => MediaRecorder.isTypeSupported(v)); const recorder = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined); const chunks = [];
+        recorder.ondataavailable = (event) => { if (event.data.size) chunks.push(event.data); }; const stopped = new Promise((resolve) => recorder.onstop = () => resolve(new Blob(chunks, { type: recorder.mimeType || "video/webm" })));
+        recorder.start(200); await source.play(); let frameCount = 0;
+        await new Promise((resolve) => { const paint = () => { if (source.ended) { resolve(); return; } canvas.getContext("2d").drawImage(source, 0, 0, state.width, state.height); const report = makeCleanFrame(canvas, state.rect, els.fullRect.checked, null, true); frameCount++; if (frameCount % 30 === 0) els.maskInfo.textContent = `Mask：按帧清理中 · ${frameCount} 帧 · ${report.mode}`; requestAnimationFrame(paint); }; source.onended = resolve; paint(); });
+        if (recorder.state === "recording") recorder.stop(); const blob = await stopped; if (state.outputUrl) URL.revokeObjectURL(state.outputUrl); state.outputUrl = URL.createObjectURL(blob); els.resultVideo.src = state.outputUrl; els.resultVideo.hidden = false; els.resultImage.hidden = true; els.resultEmpty.hidden = true; els.download.href = state.outputUrl; els.download.download = `${state.file.name.replace(/\.[^/.]+$/, "")}-doubao-cleaned-v2.webm`; els.download.textContent = "下载 WebM 结果"; els.download.hidden = false; log(`视频完成：${frameCount} 帧，按首帧字形 mask 处理`); }
+
+      async function run() { if (!state.file || !state.rect.w || !state.rect.h || state.busy) return; state.busy = true; els.run.disabled = true; setStatus("处理中，请等待真实结果…"); try { if (state.type === "image") await runImage(); else await runVideo(); setStatus("处理完成，可直接查看右侧结果"); } catch (error) { setStatus(error.message || String(error), "error"); log(`失败：${error.message || error}`); } finally { state.busy = false; els.run.disabled = false; } }
+      els.file.addEventListener("change", async () => { const file = els.file.files?.[0]; if (!file) return; if (state.url) URL.revokeObjectURL(state.url); state.file = file; state.url = URL.createObjectURL(file); state.type = file.type.startsWith("video/") ? "video" : "image"; els.resultImage.hidden = true; els.resultVideo.hidden = true; els.resultEmpty.hidden = false; els.download.hidden = true; els.auto.disabled = false; els.apply.disabled = false; els.run.disabled = false; try { if (state.type === "image") await loadImage(file); else await loadVideo(file); setStatus("素材已载入，右下角已生成默认定位框"); log(`载入 ${file.name}`); } catch (error) { setStatus(error.message || String(error), "error"); } });
+      els.auto.addEventListener("click", () => { defaultRect(); setStatus("已按画面比例定位右下角水印区"); });
+      els.apply.addEventListener("click", () => { rectFromInputs(); setStatus("已应用手动定位框"); });
+      els.run.addEventListener("click", () => void run());
+      [els.x, els.y, els.w, els.h].forEach((input) => input.addEventListener("change", rectFromInputs));
+      window.addEventListener("resize", drawSelection);
+    </script>
+  </body>
+</html>
