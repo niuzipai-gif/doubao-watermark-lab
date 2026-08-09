@@ -9,6 +9,8 @@ import cv2
 import numpy as np
 from flask import Flask, jsonify, request, send_file
 
+from link_parser import LinkResolutionError, resolve_first_media
+
 
 ROOT = Path(__file__).resolve().parent
 app = Flask(__name__, static_folder=str(ROOT), static_url_path="")
@@ -326,6 +328,28 @@ def clean_image():
     )
     response.headers["X-Doubao-Mask-Pixels"] = str(pixels)
     response.headers["X-Doubao-Mode"] = "box-inpaint"
+    return response
+
+
+@app.post("/api/resolve-link")
+def resolve_link():
+    payload = request.get_json(silent=True) or {}
+    raw_url = str(payload.get("url", "")).strip()
+    if not raw_url:
+        return jsonify(error="请先粘贴豆包公开分享链接"), 400
+    try:
+        media = resolve_first_media(raw_url)
+    except LinkResolutionError as error:
+        return jsonify(error=str(error)), 422
+    response = send_file(
+        io.BytesIO(media["data"]),
+        mimetype=media["mimetype"],
+        as_attachment=True,
+        download_name=f"doubao-original{media['suffix']}",
+    )
+    response.headers["X-Doubao-Link-Mode"] = "public-share-resolver"
+    response.headers["X-Doubao-Link-Kind"] = media["kind"]
+    response.headers["X-Doubao-Link-Suffix"] = media["suffix"].lstrip(".")
     return response
 
 
