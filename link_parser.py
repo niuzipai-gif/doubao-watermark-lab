@@ -116,6 +116,77 @@ def _extract_image_urls(raw_html: str) -> list[str]:
     return list(dict.fromkeys(item.replace("&amp;", "&") for item in urls if item))
 
 
+def _parse_thread_ssr(raw_html: str) -> tuple[list[str], list[str]]:
+    """Extract media references from the escaped SSR payload in a /thread/ page."""
+    patterns = (
+        r'data-script-src="modern-run-router-data-fn" data-fn-args="(.*?)" nonce="',
+        r'data-script-src="modern-run-window-fn" data-fn-name="mergeLoaderData" data-fn-args="(.*?)" nonce="',
+    )
+    payload = None
+    for pattern in patterns:
+        match = re.search(pattern, raw_html, flags=re.DOTALL)
+        if not match:
+            continue
+        payload_text = html.unescape(match.group(1)).replace("&quot;", '"').replace("\\/", "/")
+        try:
+            payload = json.loads(payload_text)
+            break
+        except (TypeError, ValueError):
+            continue
+    if payload is None:
+        return [], []
+
+    image_urls: list[str] = []
+    video_keys: list[str] = []
+
+    def add_image(value: object) -> None:
+        if not isinstance(value, str):
+            return
+        value = html.unescape(value).replace("\\/", "/").replace("&amp;", "&")
+        parsed = urlparse(value)
+        if parsed.scheme in {"http", "https"} and _host_allowed(parsed.hostname or "", MEDIA_HOST_SUFFIXES):
+            image_urls.append(value)
+
+    def add_video_key(value: object) -> None:
+        if isinstance(value, str) and 4 <= len(value) <= 256:
+            video_keys.append(value)
+
+    def walk(value: object, depth: int = 0) -> None:
+        if depth > 14:
+            return
+        if isinstance(value, str):
+            candidate = html.unescape(value).replace("&quot;", '"')
+            if candidate.startswith(("{", "[")):
+                try:
+                    walk(json.loads(candidate), depth + 1)
+                except (TypeError, ValueError):
+                    pass
+            return
+        if isinstance(value, list):
+            for item in value:
+                walk(item, depth + 1)
+            return
+        if not isinstance(value, dict):
+            return
+
+        image_raw = value.get("image_ori_raw")
+        if isinstance(image_raw, dict):
+            add_image(image_raw.get("url"))
+        image = value.get("image")
+        if isinstance(image, dict):
+            nested_image_raw = image.get("image_ori_raw")
+            if isinstance(nested_image_raw, dict):
+                add_image(nested_image_raw.get("url"))
+        for key in ("vid", "video_id"):
+            if key in value:
+                add_video_key(value.get(key))
+        for child in value.values():
+            walk(child, depth + 1)
+
+    walk(payload)
+    return list(dict.fromkeys(image_urls)), list(dict.fromkeys(video_keys))
+
+
 def _play_info(video_key: str) -> dict:
     params = {
         "version_code": "20800",
@@ -174,13 +245,14 @@ def resolve_first_media(raw_url: str) -> dict:
     page_html = ""
     if parsed.path.startswith("/thread/"):
         page_html = _fetch_text(raw_url)
-    video_keys = _extract_video_keys(page_html, parsed)
+    ssr_images, ssr_video_keys = _parse_thread_ssr(page_html) if page_html else ([], [])
+    video_keys = list(dict.fromkeys(ssr_video_keys + _extract_video_keys(page_html, parsed)))
     for key in video_keys:
         try:
             return _download_media(_play_info(key)["url"], "video")
         except LinkResolutionError:
             continue
-    image_urls = _extract_image_urls(page_html)
+    image_urls = list(dict.fromkeys(ssr_images + _extract_image_urls(page_html)))
     if image_urls:
         return _download_media(image_urls[0], "image")
     if parsed.path.startswith("/video-sharing"):
