@@ -5,6 +5,8 @@ pipeline. It only handles public share pages and never calls clean-image or
 clean-video.
 """
 
+import base64
+import hashlib
 import html
 import json
 import os
@@ -14,12 +16,22 @@ import urllib.request
 from pathlib import PurePosixPath
 from urllib.parse import parse_qs, urlparse
 
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+
 
 MAX_RESPONSE_BYTES = int(os.environ.get("DOUBAO_LINK_MAX_BYTES", str(300 * 1024 * 1024)))
 MAX_JSON_BYTES = 8 * 1024 * 1024
 DOUBAO_API = "https://www.doubao.com/samantha/media/get_play_info"
 DOUBAO_HOST_SUFFIX = ".doubao.com"
-MEDIA_HOST_SUFFIXES = (".doubao.com", ".byteimg.com", ".ibytedimg.com", ".bytecdn.cn")
+MEDIA_HOST_SUFFIXES = (
+    ".doubao.com",
+    ".byteimg.com",
+    ".ibytedimg.com",
+    ".bytecdn.cn",
+    ".douyin.com",
+    ".snssdk.com",
+)
+FPLAY_KDF_SALT = "TdTC5rgxYgkOUrPHpnM7pByyRiuCmrWKGWs521cXdST0m69/COjWjSanLjfBqVovHwWlGJKu8pSXMrYqOKrdWA=="
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
@@ -105,6 +117,115 @@ def _extract_video_keys(raw_html: str, parsed_url) -> list[str]:
     for pattern in patterns:
         keys.extend(re.findall(pattern, decoded, flags=re.IGNORECASE))
     return list(dict.fromkeys(item for item in keys if item))
+
+
+def _extract_fallback_apis(raw_html: str) -> list[str]:
+    decoded = html.unescape(raw_html).replace("&amp;", "&")
+    for _ in range(4):
+        decoded = (
+            decoded.replace("\\u002F", "/")
+            .replace("\\u002f", "/")
+            .replace("\\/", "/")
+            .replace("\\\\", "\\")
+            .replace('\\"', '"')
+        )
+    patterns = (
+        r'fallback_api\s*"?\s*:\s*"(https?://[^"\\]+)',
+        r'fallback_api\s*:\s*(https?://[^"\\]+)',
+    )
+    urls = []
+    for pattern in patterns:
+        urls.extend(re.findall(pattern, decoded, flags=re.IGNORECASE))
+    return list(
+        dict.fromkeys(
+            item
+            for item in urls
+            if _host_allowed(urlparse(item).hostname or "", MEDIA_HOST_SUFFIXES)
+        )
+    )
+
+
+def _fetch_get_json(url: str) -> dict:
+    request = urllib.request.Request(
+        url,
+        headers={
+            "User-Agent": USER_AGENT,
+            "Referer": "https://www.doubao.com/",
+            "Accept": "application/json,text/plain,*/*",
+        },
+    )
+    data, _ = _read_response(request, MAX_JSON_BYTES)
+    try:
+        result = json.loads(data.decode("utf-8", errors="replace"))
+    except json.JSONDecodeError as error:
+        raise LinkResolutionError("豆包视频接口返回的数据格式异常") from error
+    if not isinstance(result, dict):
+        raise LinkResolutionError("豆包视频接口没有返回有效数据")
+    return result
+
+
+def _decode_base64_urlsafe(value: str) -> bytes:
+    normalized = str(value or "").replace("-", "+").replace("_", "/")
+    normalized += "=" * ((4 - len(normalized) % 4) % 4)
+    try:
+        return base64.b64decode(normalized, validate=False)
+    except (TypeError, ValueError) as error:
+        raise LinkResolutionError("豆包视频地址编码异常") from error
+
+
+def _unwatermarked_fallback_url(fallback_api: str) -> str:
+    parsed = urlparse(fallback_api)
+    query = parse_qs(parsed.query, keep_blank_values=True)
+    query.pop("force_fids", None)
+    query.pop("logo_type", None)
+    query["codec_type"] = ["1"]
+    return parsed._replace(query=urllib.parse.urlencode(query, doseq=True)).geturl()
+
+
+def _decrypt_fplay_url(encoded_url: str, key_seed: str) -> str:
+    encrypted = _decode_base64_urlsafe(encoded_url)
+    seed = _decode_base64_urlsafe(key_seed)
+    if len(encrypted) <= 4 or not seed:
+        raise LinkResolutionError("豆包视频加密地址不完整")
+    first_hash = hashlib.sha512(seed).digest()
+    salt = _decode_base64_urlsafe(FPLAY_KDF_SALT)
+    derived = hashlib.sha512(first_hash + salt).digest()
+    cipher = Cipher(algorithms.AES(derived[:16]), modes.CBC(derived[16:32]))
+    decryptor = cipher.decryptor()
+    plain = decryptor.update(encrypted[4:]) + decryptor.finalize()
+    pad = plain[-1] if plain else 0
+    if 1 <= pad <= 16 and plain.endswith(bytes([pad]) * pad):
+        plain = plain[:-pad]
+    media_url = plain.decode("utf-8", errors="strict").strip()
+    parsed = urlparse(media_url)
+    if parsed.scheme not in {"http", "https"} or not _host_allowed(parsed.hostname or "", MEDIA_HOST_SUFFIXES):
+        raise LinkResolutionError("豆包解密后的视频地址不受支持")
+    return media_url
+
+
+def _fallback_video_urls(fallback_api: str) -> list[str]:
+    result = _fetch_get_json(_unwatermarked_fallback_url(fallback_api))
+    data = (result.get("video_info") or {}).get("data") or {}
+    key_seed = data.get("key_seed")
+    video_list = data.get("video_list") or {}
+    if not key_seed or not isinstance(video_list, dict):
+        raise LinkResolutionError("豆包没有返回可解密的视频地址")
+    urls = []
+    preferred_items = sorted(video_list.items(), key=lambda item: (item[0] != "video_1", item[0]))
+    for _, item in preferred_items:
+        if not isinstance(item, dict):
+            continue
+        for field in ("main_url", "backup_url_1"):
+            encoded_url = item.get(field)
+            if not encoded_url:
+                continue
+            try:
+                urls.append(_decrypt_fplay_url(encoded_url, key_seed))
+            except (LinkResolutionError, ValueError):
+                continue
+    if not urls:
+        raise LinkResolutionError("豆包返回的视频地址无法解密")
+    return list(dict.fromkeys(urls))
 
 
 def _extract_image_urls(raw_html: str) -> list[str]:
@@ -248,6 +369,13 @@ def resolve_first_media(raw_url: str) -> dict:
     page_html = ""
     if parsed.path.startswith("/thread/"):
         page_html = _fetch_text(raw_url)
+    fallback_apis = _extract_fallback_apis(page_html) if page_html else []
+    for fallback_api in fallback_apis:
+        try:
+            for media_url in _fallback_video_urls(fallback_api):
+                return _download_media(media_url, "video")
+        except LinkResolutionError:
+            continue
     ssr_images, ssr_video_keys = _parse_thread_ssr(page_html) if page_html else ([], [])
     video_keys = list(dict.fromkeys(ssr_video_keys + _extract_video_keys(page_html, parsed)))
     for key in video_keys:
