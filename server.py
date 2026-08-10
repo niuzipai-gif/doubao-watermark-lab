@@ -15,6 +15,36 @@ from link_parser import LinkResolutionError, resolve_first_media
 ROOT = Path(__file__).resolve().parent
 app = Flask(__name__, static_folder=str(ROOT), static_url_path="")
 
+ALLOWED_LOCAL_ORIGINS = {
+    "https://niuzipai-gif.github.io",
+    "http://127.0.0.1:4173",
+    "http://localhost:4173",
+}
+
+
+@app.after_request
+def add_local_bridge_headers(response):
+    origin = request.headers.get("Origin")
+    if origin in ALLOWED_LOCAL_ORIGINS:
+        response.headers["Access-Control-Allow-Origin"] = origin
+        response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+        response.headers["Access-Control-Allow-Headers"] = "Content-Type"
+        response.headers["Access-Control-Allow-Private-Network"] = "true"
+        response.headers["Access-Control-Expose-Headers"] = ", ".join(
+            [
+                "X-Doubao-Mode",
+                "X-Doubao-Frames",
+                "X-Doubao-Detected-Frames",
+                "X-Doubao-Tracked-Frames",
+                "X-Doubao-Planned-Frames",
+                "X-Doubao-Mask-Pixels",
+                "X-Doubao-Link-Kind",
+                "X-Doubao-Link-Suffix",
+            ]
+        )
+        response.headers["Vary"] = "Origin"
+    return response
+
 
 def number(name, default=0):
     try:
@@ -333,7 +363,7 @@ def clean_image():
 
 @app.post("/api/resolve-link")
 def resolve_link():
-    payload = request.get_json(silent=True) or {}
+    payload = request.get_json(silent=True) or request.form
     raw_url = str(payload.get("url", "")).strip()
     if not raw_url:
         return jsonify(error="请先粘贴豆包公开分享链接"), 400
@@ -351,6 +381,11 @@ def resolve_link():
     response.headers["X-Doubao-Link-Kind"] = media["kind"]
     response.headers["X-Doubao-Link-Suffix"] = media["suffix"].lstrip(".")
     return response
+
+
+@app.route("/api/<path:resource>", methods=["OPTIONS"])
+def api_preflight(resource):
+    return ("", 204)
 
 
 @app.post("/api/clean-video")

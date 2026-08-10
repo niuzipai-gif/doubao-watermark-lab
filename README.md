@@ -16,8 +16,10 @@
 python server.py
 ```
 
-然后打开 `http://127.0.0.1:4173/`。本地后端会启用 OpenCV 的图片和视频处理；直接打开 GitHub Pages 时，图片可以使用浏览器降级路径，视频需要本地后端。
+Windows 下直接双击 `start-doubao-lab.bat`。它会在后台启动本地后端，并自动打开 GitHub Pages；如果后端已经启动，不会重复启动。
 
-链接解析也需要本地后端。支持豆包公开的 `/thread/` 对话分享链接和带 `video_id` 的 `/video-sharing` 视频分享链接；登录态、失效链接以及豆包页面结构变化会直接返回失败原因，不会伪造下载结果。
+本地后端地址是 `http://127.0.0.1:4173/`。它启用 OpenCV 的图片和视频处理；公开 Pages 会自动尝试连接这个本地地址。
+
+链接解析需要本地后端在线。支持豆包公开的 `/thread/` 对话分享链接和带 `video_id` 的 `/video-sharing` 视频分享链接；登录态、失效链接以及豆包页面结构变化会直接返回失败原因，不会伪造下载结果。
 
 解析接口：`POST /api/resolve-link`，JSON 请求体为 `{ "url": "https://www.doubao.com/..." }`。
