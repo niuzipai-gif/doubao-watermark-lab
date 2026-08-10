@@ -145,6 +145,15 @@ def _extract_fallback_apis(raw_html: str) -> list[str]:
     )
 
 
+def _extract_video_keys_from_fallback_apis(fallback_apis: list[str]) -> list[str]:
+    keys = []
+    for fallback_api in fallback_apis:
+        for segment in urlparse(fallback_api).path.split("/"):
+            if re.fullmatch(r"v[0-9a-z_-]{12,}", segment, flags=re.IGNORECASE):
+                keys.append(segment)
+    return list(dict.fromkeys(keys))
+
+
 def _fetch_get_json(url: str) -> dict:
     request = urllib.request.Request(
         url,
@@ -377,7 +386,13 @@ def resolve_first_media(raw_url: str) -> dict:
         except LinkResolutionError:
             continue
     ssr_images, ssr_video_keys = _parse_thread_ssr(page_html) if page_html else ([], [])
-    video_keys = list(dict.fromkeys(ssr_video_keys + _extract_video_keys(page_html, parsed)))
+    video_keys = list(
+        dict.fromkeys(
+            _extract_video_keys_from_fallback_apis(fallback_apis)
+            + ssr_video_keys
+            + _extract_video_keys(page_html, parsed)
+        )
+    )
     for key in video_keys:
         try:
             return _download_media(_play_info(key)["url"], "video")
