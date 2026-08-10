@@ -94,10 +94,13 @@ def _extract_video_keys(raw_html: str, parsed_url) -> list[str]:
     query = parse_qs(parsed_url.query)
     keys = list(query.get("video_id", []))
     decoded = html.unescape(raw_html).replace("\\/", "/")
+    for _ in range(3):
+        decoded = decoded.replace("\\\\", "\\")
     patterns = (
         r'\\?"vid\\?"\s*:\s*\\?"([^"\\]+)',
         r'&quot;vid& quot;\s*:\s*&quot;([^&]+)',
         r'video_id=([^&"\\]+)',
+        r'\b(?:vid|video_id)\b[^A-Za-z0-9]{0,40}(v[0-9a-z_-]{12,})',
     )
     for pattern in patterns:
         keys.extend(re.findall(pattern, decoded, flags=re.IGNORECASE))
