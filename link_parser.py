@@ -85,7 +85,7 @@ def _fetch_text(url: str) -> str:
     data, _ = _read_response(request, MAX_JSON_BYTES)
     direct_text = data.decode("utf-8", errors="replace")
     parsed = urlparse(url)
-    if not parsed.path.startswith("/thread/") or "fallback_api" in direct_text or "image_ori_raw" in direct_text:
+    if not parsed.path.startswith("/thread/"):
         return direct_text
 
     proxy_query = parse_qs(parsed.query, keep_blank_values=True)
@@ -96,15 +96,19 @@ def _fetch_text(url: str) -> str:
             "_x_tr_hl": ["en"],
         }
     )
-    proxy_url = f"https://{TRANSLATE_PROXY_HOST}{parsed.path}?{urlencode(proxy_query, doseq=True)}"
-    try:
-        proxy_request = urllib.request.Request(proxy_url, headers=headers)
-        proxy_data, _ = _read_response(proxy_request, MAX_JSON_BYTES)
-        proxy_text = proxy_data.decode("utf-8", errors="replace")
-        if "fallback_api" in proxy_text or "image_ori_raw" in proxy_text:
-            return proxy_text
-    except LinkResolutionError:
-        pass
+    proxy_urls = (
+        f"https://{TRANSLATE_PROXY_HOST}{parsed.path}?{urlencode(proxy_query, doseq=True)}",
+        "https://translate.google.com/translate?" + urlencode({"sl": "auto", "tl": "en", "u": url}),
+    )
+    for proxy_url in proxy_urls:
+        try:
+            proxy_request = urllib.request.Request(proxy_url, headers=headers)
+            proxy_data, _ = _read_response(proxy_request, MAX_JSON_BYTES)
+            proxy_text = proxy_data.decode("utf-8", errors="replace")
+            if "fallback_api" in proxy_text or "image_ori_raw" in proxy_text:
+                return proxy_text
+        except LinkResolutionError:
+            continue
     return direct_text
 
 
