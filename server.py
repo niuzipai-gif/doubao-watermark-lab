@@ -14,6 +14,7 @@ from link_parser import LinkResolutionError, resolve_first_media
 
 ROOT = Path(__file__).resolve().parent
 app = Flask(__name__, static_folder=str(ROOT), static_url_path="")
+app.config["MAX_CONTENT_LENGTH"] = 300 * 1024 * 1024
 
 ALLOWED_LOCAL_ORIGINS = {
     "https://niuzipai-gif.github.io",
@@ -388,6 +389,11 @@ def api_preflight(resource):
     return ("", 204)
 
 
+@app.get("/healthz")
+def healthz():
+    return jsonify(status="ok", service="doubao-watermark-api")
+
+
 @app.post("/api/clean-video")
 def clean_video():
     upload = request.files.get("media")
@@ -507,4 +513,8 @@ def index():
 
 
 if __name__ == "__main__":
-    app.run(host="127.0.0.1", port=int(os.environ.get("PORT", "4173")), threaded=True)
+    app.run(
+        host=os.environ.get("HOST", "127.0.0.1"),
+        port=int(os.environ.get("PORT", "4173")),
+        threaded=True,
+    )

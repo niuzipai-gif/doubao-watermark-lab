@@ -23,3 +23,14 @@ Windows 下直接双击 `start-doubao-lab.bat`。它会在后台启动本地后�
 链接解析需要本地后端在线。支持豆包公开的 `/thread/` 对话分享链接和带 `video_id` 的 `/video-sharing` 视频分享链接；登录态、失效链接以及豆包页面结构变化会直接返回失败原因，不会伪造下载结果。
 
 解析接口：`POST /api/resolve-link`，JSON 请求体为 `{ "url": "https://www.doubao.com/..." }`。
+
+## 公网部署
+
+GitHub Pages 只负责静态前端，公网处理需要单独部署 Flask API。仓库已经包含 `Dockerfile`、`render.yaml` 和生产启动命令，推荐使用 Render Web Service：
+
+1. 登录 Render，选择 `New -> Web Service -> Public Git Repository`，填入 `https://github.com/niuzipai-gif/doubao-watermark-lab`。
+2. 选择 Docker 部署；仓库中的 `render.yaml` 默认使用 Free 规格，首次请求可能需要等待冷启动。
+3. 部署完成后复制 Render 的 `https://...onrender.com` 地址，写入 `api-config.js` 的 `window.DOUBAO_API_BASE`，再提交并推送一次。
+4. 打开 GitHub Pages，图片、BETA 视频和链接解析都会直接请求公网 API；朋友不需要安装 Python 或启动本地后端。
+
+Render Free Web Service 会在 15 分钟无请求后休眠，下一次请求需要冷启动；朋友频繁使用或视频任务较多时，应升级实例规格。处理文件只写入临时目录，不保存用户素材。

@@ -1,0 +1,9 @@
+services:
+  - type: web
+    name: doubao-watermark-api
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /healthz
+    autoDeployTrigger: commit
