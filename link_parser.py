@@ -14,7 +14,7 @@ import re
 import urllib.error
 import urllib.request
 from pathlib import PurePosixPath
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, urlencode, urlparse
 
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
@@ -22,6 +22,7 @@ from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 MAX_RESPONSE_BYTES = int(os.environ.get("DOUBAO_LINK_MAX_BYTES", str(300 * 1024 * 1024)))
 MAX_JSON_BYTES = 8 * 1024 * 1024
 DOUBAO_API = "https://www.doubao.com/samantha/media/get_play_info"
+TRANSLATE_PROXY_HOST = "www-doubao-com.translate.goog"
 DOUBAO_HOST_SUFFIX = ".doubao.com"
 MEDIA_HOST_SUFFIXES = (
     ".doubao.com",
@@ -74,9 +75,37 @@ def _read_response(request, limit: int):
 
 
 def _fetch_text(url: str) -> str:
-    request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT, "Accept-Language": "zh-CN,zh;q=0.9"})
+    headers = {
+        "User-Agent": USER_AGENT,
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+        "Accept-Language": "zh-CN,zh;q=0.9",
+        "Referer": "https://www.doubao.com/",
+    }
+    request = urllib.request.Request(url, headers=headers)
     data, _ = _read_response(request, MAX_JSON_BYTES)
-    return data.decode("utf-8", errors="replace")
+    direct_text = data.decode("utf-8", errors="replace")
+    parsed = urlparse(url)
+    if not parsed.path.startswith("/thread/") or "fallback_api" in direct_text or "image_ori_raw" in direct_text:
+        return direct_text
+
+    proxy_query = parse_qs(parsed.query, keep_blank_values=True)
+    proxy_query.update(
+        {
+            "_x_tr_sl": ["auto"],
+            "_x_tr_tl": ["en"],
+            "_x_tr_hl": ["en"],
+        }
+    )
+    proxy_url = f"https://{TRANSLATE_PROXY_HOST}{parsed.path}?{urlencode(proxy_query, doseq=True)}"
+    try:
+        proxy_request = urllib.request.Request(proxy_url, headers=headers)
+        proxy_data, _ = _read_response(proxy_request, MAX_JSON_BYTES)
+        proxy_text = proxy_data.decode("utf-8", errors="replace")
+        if "fallback_api" in proxy_text or "image_ori_raw" in proxy_text:
+            return proxy_text
+    except LinkResolutionError:
+        pass
+    return direct_text
 
 
 def _fetch_json(url: str, payload: dict) -> dict:
@@ -188,7 +217,7 @@ def _unwatermarked_fallback_url(fallback_api: str) -> str:
     query.pop("force_fids", None)
     query.pop("logo_type", None)
     query["codec_type"] = ["1"]
-    return parsed._replace(query=urllib.parse.urlencode(query, doseq=True)).geturl()
+    return parsed._replace(query=urlencode(query, doseq=True)).geturl()
 
 
 def _decrypt_fplay_url(encoded_url: str, key_seed: str) -> str:
