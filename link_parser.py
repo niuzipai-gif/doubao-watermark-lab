@@ -379,11 +379,13 @@ def resolve_first_media(raw_url: str) -> dict:
     if parsed.path.startswith("/thread/"):
         page_html = _fetch_text(raw_url)
     fallback_apis = _extract_fallback_apis(page_html) if page_html else []
+    fallback_errors = []
     for fallback_api in fallback_apis:
         try:
             for media_url in _fallback_video_urls(fallback_api):
                 return _download_media(media_url, "video")
-        except LinkResolutionError:
+        except LinkResolutionError as error:
+            fallback_errors.append(str(error))
             continue
     ssr_images, ssr_video_keys = _parse_thread_ssr(page_html) if page_html else ([], [])
     video_keys = list(
@@ -393,14 +395,21 @@ def resolve_first_media(raw_url: str) -> dict:
             + _extract_video_keys(page_html, parsed)
         )
     )
+    video_errors = []
     for key in video_keys:
         try:
             return _download_media(_play_info(key)["url"], "video")
-        except LinkResolutionError:
+        except LinkResolutionError as error:
+            video_errors.append(str(error))
             continue
     image_urls = list(dict.fromkeys(ssr_images + _extract_image_urls(page_html)))
     if image_urls:
         return _download_media(image_urls[0], "image")
     if parsed.path.startswith("/video-sharing"):
         raise LinkResolutionError("视频分享链接缺少 video_id，或链接已经失效")
-    raise LinkResolutionError("分享页中没有找到可下载的公开图片或视频")
+    diagnostics = [f"fallback={len(fallback_apis)}", f"video_id={len(video_keys)}", f"image={len(image_urls)}"]
+    if fallback_errors:
+        diagnostics.append(f"fallback_error={fallback_errors[0]}")
+    if video_errors:
+        diagnostics.append(f"video_error={video_errors[0]}")
+    raise LinkResolutionError("分享页中没有找到可下载的公开图片或视频（" + ", ".join(diagnostics) + "）")
