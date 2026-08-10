@@ -3,6 +3,9 @@ import os
 import shutil
 import subprocess
 import tempfile
+import threading
+import time
+import uuid
 from pathlib import Path
 
 import cv2
@@ -15,6 +18,10 @@ from link_parser import LinkResolutionError, resolve_first_media
 ROOT = Path(__file__).resolve().parent
 app = Flask(__name__, static_folder=str(ROOT), static_url_path="")
 app.config["MAX_CONTENT_LENGTH"] = 300 * 1024 * 1024
+VIDEO_JOB_ROOT = Path(tempfile.gettempdir()) / "doubao-video-jobs"
+VIDEO_JOB_ROOT.mkdir(parents=True, exist_ok=True)
+VIDEO_JOBS = {}
+VIDEO_JOBS_LOCK = threading.Lock()
 
 ALLOWED_LOCAL_ORIGINS = {
     "https://niuzipai-gif.github.io",
@@ -394,12 +401,187 @@ def healthz():
     return jsonify(status="ok", service="doubao-watermark-api")
 
 
+def _update_video_job(job_id, **changes):
+    with VIDEO_JOBS_LOCK:
+        if job_id in VIDEO_JOBS:
+            VIDEO_JOBS[job_id].update(changes)
+
+
+def _run_video_job(job_id, source_path, source_name, full_rect):
+    job_dir = source_path.parent
+    try:
+        _update_video_job(job_id, status="running")
+        capture = cv2.VideoCapture(str(source_path))
+        if not capture.isOpened():
+            raise RuntimeError("cannot open video")
+        width = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH))
+        height = int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        fps = capture.get(cv2.CAP_PROP_FPS) or 24.0
+        rect = (0, 0, width, height)
+        processed_path = job_dir / "processed.mp4"
+        writer = cv2.VideoWriter(str(processed_path), cv2.VideoWriter_fourcc(*"mp4v"), fps, (width, height))
+        if not writer.isOpened():
+            capture.release()
+            raise RuntimeError("cannot create video writer")
+
+        frames = 0
+        raw_boxes = []
+        while True:
+            ok, frame = capture.read()
+            if not ok:
+                break
+            frames += 1
+            raw_boxes.append(None if full_rect else find_watermark_box(frame)[0])
+        capture.release()
+        if frames == 0:
+            writer.release()
+            raise RuntimeError("video has no frames")
+
+        planned_boxes, detected_frames, filled_frames = plan_video_boxes(raw_boxes, width, height)
+        mask_pixels = 0
+        capture = cv2.VideoCapture(str(source_path))
+        frame_index = 0
+        while True:
+            ok, frame = capture.read()
+            if not ok:
+                break
+            if full_rect:
+                mask = box_mask(frame.shape, rect, padding=0)
+            else:
+                mask = np.zeros(frame.shape[:2], dtype=np.uint8)
+                for box in planned_boxes[frame_index]:
+                    mask = np.maximum(mask, video_text_mask(frame, box))
+            if np.count_nonzero(mask):
+                cleaned = cv2.inpaint(frame, mask, max(3, min(9, int(width / 180))), cv2.INPAINT_TELEA)
+                mask_pixels += int(np.count_nonzero(mask))
+            else:
+                cleaned = frame
+            writer.write(cleaned)
+            frame_index += 1
+        capture.release()
+        writer.release()
+
+        output_path = job_dir / "cleaned.webm"
+        ffmpeg = shutil.which("ffmpeg")
+        if ffmpeg:
+            command = [
+                ffmpeg,
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-y",
+                "-i",
+                str(processed_path),
+                "-i",
+                str(source_path),
+                "-map",
+                "0:v:0",
+                "-map",
+                "1:a?",
+                "-c:v",
+                "libvpx-vp9",
+                "-deadline",
+                "realtime",
+                "-cpu-used",
+                "4",
+                "-crf",
+                "31",
+                "-b:v",
+                "0",
+                "-c:a",
+                "libopus",
+                str(output_path),
+            ]
+            result = subprocess.run(command, capture_output=True, text=True)
+            if result.returncode != 0:
+                output_path = processed_path
+        else:
+            output_path = processed_path
+
+        headers = {
+            "X-Doubao-Frames": str(frames),
+            "X-Doubao-Detected-Frames": str(detected_frames),
+            "X-Doubao-Tracked-Frames": str(filled_frames),
+            "X-Doubao-Planned-Frames": str(sum(bool(boxes) for boxes in planned_boxes)),
+            "X-Doubao-Mask-Pixels": str(mask_pixels),
+            "X-Doubao-Mode": "temporal-gap-fill-inpaint",
+        }
+        _update_video_job(
+            job_id,
+            status="done",
+            path=str(output_path),
+            mimetype="video/webm" if output_path.suffix == ".webm" else "video/mp4",
+            download_name=f"{Path(source_name).stem}-doubao-cleaned-v3{output_path.suffix}",
+            headers=headers,
+        )
+    except Exception as error:
+        _update_video_job(job_id, status="error", error=str(error))
+
+
+@app.get("/api/clean-video/jobs/<job_id>")
+def video_job_status(job_id):
+    with VIDEO_JOBS_LOCK:
+        job = dict(VIDEO_JOBS.get(job_id) or {})
+    if not job:
+        return jsonify(error="video job not found"), 404
+    payload = {"status": job.get("status")}
+    if job.get("status") == "done":
+        payload.update(
+            job.get("headers") or {},
+            downloadUrl=f"/api/clean-video/jobs/{job_id}/download",
+        )
+    elif job.get("status") == "error":
+        payload["error"] = job.get("error", "video processing failed")
+    return jsonify(payload)
+
+
+@app.get("/api/clean-video/jobs/<job_id>/download")
+def video_job_download(job_id):
+    with VIDEO_JOBS_LOCK:
+        job = dict(VIDEO_JOBS.get(job_id) or {})
+    if not job:
+        return jsonify(error="video job not found"), 404
+    if job.get("status") != "done":
+        return jsonify(error="video job is not complete", status=job.get("status")), 409
+    output_path = Path(job["path"])
+    if not output_path.is_file():
+        return jsonify(error="video result expired"), 410
+    response = send_file(
+        output_path,
+        mimetype=job["mimetype"],
+        as_attachment=True,
+        download_name=job["download_name"],
+    )
+    for key, value in (job.get("headers") or {}).items():
+        response.headers[key] = value
+    return response
+
+
 @app.post("/api/clean-video")
 def clean_video():
     upload = request.files.get("media")
     if not upload:
         return jsonify(error="missing media"), 400
     full_rect = request.form.get("fullRect") == "1"
+    if request.form.get("async") == "1":
+        job_id = uuid.uuid4().hex
+        job_dir = VIDEO_JOB_ROOT / job_id
+        job_dir.mkdir(parents=True, exist_ok=True)
+        source_name = Path(upload.filename).name or "source.mp4"
+        source_path = job_dir / source_name
+        upload.save(source_path)
+        with VIDEO_JOBS_LOCK:
+            VIDEO_JOBS[job_id] = {"status": "queued", "created": time.time()}
+        threading.Thread(
+            target=_run_video_job,
+            args=(job_id, source_path, source_name, full_rect),
+            daemon=True,
+        ).start()
+        return jsonify(
+            status="queued",
+            jobId=job_id,
+            statusUrl=f"/api/clean-video/jobs/{job_id}",
+        ), 202
     with tempfile.TemporaryDirectory(prefix="doubao-v3-") as temp_dir:
         temp = Path(temp_dir)
         source_path = temp / (Path(upload.filename).name or "source.mp4")
