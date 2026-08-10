@@ -82,11 +82,26 @@ def _fetch_text(url: str) -> str:
         "Referer": "https://www.doubao.com/",
     }
     request = urllib.request.Request(url, headers=headers)
-    data, _ = _read_response(request, MAX_JSON_BYTES)
+    data, direct_headers = _read_response(request, MAX_JSON_BYTES)
     direct_text = data.decode("utf-8", errors="replace")
     parsed = urlparse(url)
     if not parsed.path.startswith("/thread/"):
         return direct_text
+    if "fallback_api" in direct_text or "image_ori_raw" in direct_text:
+        return direct_text
+
+    set_cookie = direct_headers.get("Set-Cookie") if direct_headers else None
+    if set_cookie:
+        cookie = set_cookie.split(";", 1)[0]
+        try:
+            session_headers = {**headers, "Cookie": cookie}
+            session_request = urllib.request.Request(url, headers=session_headers)
+            session_data, _ = _read_response(session_request, MAX_JSON_BYTES)
+            session_text = session_data.decode("utf-8", errors="replace")
+            if "fallback_api" in session_text or "image_ori_raw" in session_text:
+                return session_text
+        except LinkResolutionError:
+            pass
 
     proxy_query = parse_qs(parsed.query, keep_blank_values=True)
     proxy_query.update(
