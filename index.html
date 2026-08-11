@@ -176,6 +176,19 @@
 
     <script src="api-config.js"></script>
     <script>
+      (() => {
+        const endpoint = "https://doubao-link-resolver.kunxin.chatgpt.site/api/control-room/page-view";
+        const payload = JSON.stringify({ source: "github-pages", path: window.location.pathname });
+        try {
+          if (navigator.sendBeacon) {
+            navigator.sendBeacon(endpoint, new Blob([payload], { type: "text/plain;charset=UTF-8" }));
+          } else {
+            fetch(endpoint, { method: "POST", headers: { "Content-Type": "text/plain;charset=UTF-8" }, body: payload, keepalive: true }).catch(() => {});
+          }
+        } catch {}
+      })();
+    </script>
+    <script>
       const $ = (id) => document.getElementById(id);
       const els = { file: $("fileInput"), drop: $("dropZone"), run: $("runButton"), download: $("download"), asset: $("assetSummary"), status: $("status"), metrics: $("metrics"), sourceMeta: $("sourceMeta"), resultMeta: $("resultMeta"), sourceEmpty: $("sourceEmpty"), resultEmpty: $("resultEmpty"), sourceImage: $("sourceImage"), sourceVideo: $("sourceVideo"), resultImage: $("resultImage"), resultVideo: $("resultVideo"), activity: $("activity"), linkInput: $("linkInput"), linkButton: $("linkButton"), linkStatus: $("linkStatus"), linkDownload: $("linkDownload") };
       const state = { file: null, type: null, url: "", resultUrl: "", linkUrl: "", busy: false };
