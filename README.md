@@ -27,6 +27,8 @@ Windows 下直接双击 `start-doubao-lab.bat`。它会在后台启动本地后�
 
 ## 公网部署
 
+独立解析页面：`https://niuzipai-gif.github.io/doubao-watermark-lab/resolver.html`。该页面只调用独立 Render 解析服务，解析成功后会在页面预览视频或图片。
+
 GitHub Pages 只负责静态前端，公网处理需要单独部署 Flask API。仓库已经包含 `Dockerfile`、`render.yaml` 和生产启动命令，推荐使用 Render Web Service：
 
 1. 登录 Render，选择 `New -> Web Service -> Public Git Repository`，填入 `https://github.com/niuzipai-gif/doubao-watermark-lab`。
